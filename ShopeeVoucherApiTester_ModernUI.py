@@ -230,13 +230,18 @@ def verify_license_server(key_text: str, hwid: str | None = None, action: str = 
     if session_token:
         _SESSION_TOKEN_RAM = session_token
 
-    # Server license chỉ trả Vubel key khi key + HWID hợp lệ. Chỉ giữ trong RAM.
-    server_vubel = str(data.get("vubel_key") or "").strip()
-    if server_vubel:
-        _VUBEL_KEY_RAM = server_vubel
-
     record = data.get("record") or {}
-    expiry_raw = data.get("expires") or record.get("expires") or ""
+    # own_vubel = True: license loại "khách tự điền Vubel key" — server không trả key admin.
+    own_vubel = bool(data.get("own_vubel") or record.get("own_vubel"))
+    if own_vubel:
+        _VUBEL_KEY_RAM = ""
+    else:
+        # Server license chỉ trả Vubel key khi key + HWID hợp lệ. Chỉ giữ trong RAM.
+        server_vubel = str(data.get("vubel_key") or "").strip()
+        if server_vubel:
+            _VUBEL_KEY_RAM = server_vubel
+
+    expiry_raw =data.get("expires") or record.get("expires") or ""
     expiry_timestamp = None
     exp_text = "Vĩnh viễn"
     if expiry_raw:
@@ -259,6 +264,7 @@ def verify_license_server(key_text: str, hwid: str | None = None, action: str = 
         "key": key_text,
         "session_token": session_token,
         "plan": data.get("plan", ""),
+        "own_vubel": own_vubel,
     })
     return result
 
@@ -297,6 +303,8 @@ def _fetch_vubel_key_from_server() -> bool:
     global _VUBEL_KEY_RAM
     if _VUBEL_KEY_RAM:
         return True  # Đã nhận từ server license lúc kích hoạt
+    if CURRENT_LICENSE_INFO.get("own_vubel"):
+        return False  # License khách tự điền Vubel key trong Cài đặt
     if not _SESSION_TOKEN_RAM:
         return False
     try:
@@ -3743,6 +3751,21 @@ class VoucherTesterApp:
         self._load_config() 
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing) 
 
+    @staticmethod
+    def _is_own_vubel_license() -> bool:
+        return bool(CURRENT_LICENSE_INFO.get("own_vubel"))
+
+    def _active_vubel_key(self) -> str:
+        """Key Vubel đang dùng: key khách tự điền (license own_vubel) hoặc key admin từ server."""
+        if self._is_own_vubel_license():
+            return self.customer_vubel_key_var.get().strip()
+        return _VUBEL_KEY_RAM
+
+    def _missing_vubel_key_message(self) -> str:
+        if self._is_own_vubel_license():
+            return "Chưa nhập Vubel API Key. Vào mục Cài đặt, dán key Vubel của bạn rồi thử lại."
+        return "Vubel key chưa sẵn sàng. Hãy khởi động lại và kích hoạt license."
+
     def _save_config(self):
         """Lưu toàn bộ nội dung đã nhập vào file JSON"""
         config = {
@@ -3788,6 +3811,9 @@ class VoucherTesterApp:
                 if item.get("email") and item.get("password")
             ],
         }
+        # Chỉ lưu key Vubel do CHÍNH KHÁCH nhập (license own_vubel). Key admin không bao giờ ghi file.
+        if self._is_own_vubel_license():
+            config["customer_vubel_key"] = self.customer_vubel_key_var.get().strip()
         try:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(config, f, ensure_ascii=False, indent=4)
@@ -3805,7 +3831,9 @@ class VoucherTesterApp:
                     self.codes_text.insert("1.0", config["codes"])
                 if "cookies" in config and config["cookies"]:
                     self.cookies_text.insert("1.0", config["cookies"])
-                # vubel_key không còn lưu/đọc từ file — đã chuyển sang RAM-only
+                # Key Vubel admin: RAM-only. Key khách tự điền: đọc lại nếu license own_vubel.
+                if self._is_own_vubel_license():
+                    self.customer_vubel_key_var.set(str(config.get("customer_vubel_key") or "").strip())
                 if "proxy" in config:
                     self.proxy_var.set(config["proxy"])
                 self.inbox_refresh_all_var.set(str(config.get("inbox_refresh_all", "0")))
@@ -4176,7 +4204,9 @@ class VoucherTesterApp:
         style.map("TNotebook.Tab", background=[("selected", "#ffffff"), ("active", "#f7f7f7")], foreground=[("selected", "#ee4d2d"), ("active", "#333333")])
 
         # Shared variables are created once and reused by Voucher / Mail / Settings pages.
-        # vubel_key_var đã xóa — key Vubel chỉ tồn tại server-side trong RAM (_VUBEL_KEY_RAM)
+        # Key Vubel của admin chỉ tồn tại trong RAM (_VUBEL_KEY_RAM).
+        # customer_vubel_key_var chỉ dùng cho license loại "khách tự điền" (own_vubel).
+        self.customer_vubel_key_var = tk.StringVar(value="")
         self.inbox_refresh_all_var = tk.StringVar(value="0")
         self.proxy_var = tk.StringVar()
         self.proxy_protocol_var = tk.StringVar(value=PROXY_PROTOCOL_HTTP)
@@ -4890,8 +4920,11 @@ class VoucherTesterApp:
         ttk.Spinbox(refresh_row, from_=0, to=86400, textvariable=self.inbox_refresh_all_var, width=8).pack(side="left", padx=8)
         ttk.Button(refresh_row, text="Áp dụng tất cả", command=self._apply_all_inbox_refresh).pack(side="left")
 
-        rows = [
-            # Vubel API Key đã xóa — key được lấy tự động từ server sau khi xác minh license
+        rows = []
+        if self._is_own_vubel_license():
+            # Chỉ hiện với license loại "khách tự điền". License thường lấy key tự động từ server.
+            rows.append(("Vubel API Key", self.customer_vubel_key_var, True, "Key Vubel của bạn — dùng cho Thêm Mail, MailFree, đọc hộp thư MailFree."))
+        rows += [
             ("Proxy / Key", self.proxy_var, False, "Dán key hoặc IP:PORT; http:// và socks5:// được tự nhận."),
             ("Độ trễ AddMail/MailFree", self.delay_var, False, f"Chờ giữa các tài khoản: từ {MIN_DELAY_SECONDS:g} giây, không giới hạn tối đa. Đổi IP chỉnh riêng trong AddMail."),
             ("Mốc hẹn giờ", self.timer_var, False, "Ví dụ: 00:00:00, 12:00:00, 20:00:00"),
@@ -5855,14 +5888,14 @@ class VoucherTesterApp:
         if not accounts:
             messagebox.showwarning("Thiếu dữ liệu", "Cần nhập ít nhất 1 tài khoản.")
             return
-        api_key = _VUBEL_KEY_RAM
+        api_key = self._active_vubel_key()
         proxy_key = self.proxy_var.get().strip()
         proxy_protocol = normalize_proxy_protocol(self.proxy_protocol_var.get())
         manual_proxy = ""
         manual_proxy_protocol_value = proxy_protocol
         auto_new_ip = bool(self.kiotproxy_auto_new_ip_var.get())
         if not api_key:
-            messagebox.showwarning("Chưa xác thực", "Vubel key chưa sẵn sàng. Hãy khởi động lại và kích hoạt license.")
+            messagebox.showwarning("Thiếu Vubel key", self._missing_vubel_key_message())
             return
         if not emails:
             messagebox.showwarning("Thiếu Email", "Hãy dán Email cần AddMail trong tab này.")
@@ -6136,14 +6169,14 @@ class VoucherTesterApp:
             messagebox.showwarning("Thiếu dữ liệu", "Cần nhập ít nhất 1 tài khoản trong tab MailFree.")
             return
 
-        api_key = _VUBEL_KEY_RAM
+        api_key = self._active_vubel_key()
         proxy_key = self.proxy_var.get().strip()
         proxy_protocol = normalize_proxy_protocol(self.proxy_protocol_var.get())
         manual_proxy = ""
         manual_proxy_protocol_value = proxy_protocol
         auto_new_ip = bool(self.kiotproxy_auto_new_ip_var.get())
         if not api_key:
-            messagebox.showwarning("Chưa xác thực", "Vubel key chưa sẵn sàng. Hãy khởi động lại và kích hoạt license.")
+            messagebox.showwarning("Thiếu Vubel key", self._missing_vubel_key_message())
             return
 
         self._save_config()
@@ -6439,9 +6472,9 @@ class VoucherTesterApp:
         if not EMAIL_ADDRESS_RE.fullmatch(email):
             messagebox.showwarning("Email không hợp lệ", "Dòng đã chọn chưa có địa chỉ MailFree hợp lệ.")
             return
-        api_key = _VUBEL_KEY_RAM
+        api_key = self._active_vubel_key()
         if not api_key:
-            messagebox.showwarning("Chưa xác thực", "Vubel key chưa sẵn sàng. Hãy khởi động lại và kích hoạt license.")
+            messagebox.showwarning("Thiếu Vubel key", self._missing_vubel_key_message())
             return
         self._open_mailfree_inbox_window(email, item, api_key)
 
@@ -6905,7 +6938,7 @@ class VoucherTesterApp:
             index: "Direct" if manager is None else "Chờ lấy IP"
             for index, manager in enumerate(self.proxy_managers, 1)
         }
-        vubel_key = _VUBEL_KEY_RAM
+        vubel_key = self._active_vubel_key()
         self._update_proxy_countdown()
         threading.Thread(
             target=self._batch_worker,
