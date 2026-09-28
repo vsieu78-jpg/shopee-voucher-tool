@@ -1,0 +1,39 @@
+# Build outputs
+BUILD_OUTPUT/
+RELEASE_TO_CUSTOMER/
+*.dist/
+*.build/
+*.onefile-build/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Secrets / config cá nhân
+config_minsu.json
+.env
+*.env
+*.key
+*.secret
+
+# Distribution / temp
+dist/
+build/
+*.spec
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Git
+*.orig
