@@ -179,7 +179,7 @@ def get_machine_hwid() -> str:
 
 def verify_license_server(key_text: str, hwid: str | None = None, action: str = "activate") -> dict[str, Any]:
     """Xác minh license qua API server (Vercel). action = 'activate' | 'verify'."""
-    global _SESSION_TOKEN_RAM
+    global _SESSION_TOKEN_RAM, _VUBEL_KEY_RAM
     key_text = str(key_text or "").strip()
     hwid = (hwid or get_machine_hwid()).strip().upper()
     result: dict[str, Any] = {
@@ -229,6 +229,11 @@ def verify_license_server(key_text: str, hwid: str | None = None, action: str = 
     session_token = str(data.get("session_token") or "")
     if session_token:
         _SESSION_TOKEN_RAM = session_token
+
+    # Server license chỉ trả Vubel key khi key + HWID hợp lệ. Chỉ giữ trong RAM.
+    server_vubel = str(data.get("vubel_key") or "").strip()
+    if server_vubel:
+        _VUBEL_KEY_RAM = server_vubel
 
     record = data.get("record") or {}
     expiry_raw = data.get("expires") or record.get("expires") or ""
@@ -290,6 +295,8 @@ def save_license_key(key_text: str, info: dict[str, Any]) -> None:
 def _fetch_vubel_key_from_server() -> bool:
     """Lấy Vubel key từ API server sau khi đã có session_token, lưu vào RAM."""
     global _VUBEL_KEY_RAM
+    if _VUBEL_KEY_RAM:
+        return True  # Đã nhận từ server license lúc kích hoạt
     if not _SESSION_TOKEN_RAM:
         return False
     try:
