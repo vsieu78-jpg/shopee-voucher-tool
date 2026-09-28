@@ -94,7 +94,7 @@ EMAIL_ADDRESS_RE = re.compile(EMAIL_ADDRESS_PATTERN)
 # ======================================================================
 # SECRET_SALT đã được xóa — không còn xác minh local.
 # Mọi license check đều gọi LICENSE_SERVER_URL.
-LICENSE_SERVER_URL = "https://ryan-voucher-license-lkzaehf20-quet.vercel.app"
+LICENSE_SERVER_URL = "https://ryan-voucher-license.vercel.app"
 API_SERVER_URL     = "https://ryan-voucher-api.fly.dev"           # Thay bằng URL Fly.io thật
 LICENSE_DIR_NAME   = "RyanNguyen_ShopeeVoucher"
 LICENSE_FILE_NAME  = "license.json"
