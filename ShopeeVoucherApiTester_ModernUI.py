@@ -197,8 +197,9 @@ def verify_license_server(key_text: str, hwid: str | None = None, action: str = 
         import urllib.error as _uerr
         payload = json.dumps({
             "action": action,
-            "license_key": key_text,
+            "key": key_text,
             "hwid": hwid,
+            "bind": 1,
             "device_name": os.environ.get("COMPUTERNAME", "PC"),
         }).encode("utf-8")
         req = _req.Request(
@@ -207,13 +208,21 @@ def verify_license_server(key_text: str, hwid: str | None = None, action: str = 
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with _req.urlopen(req, timeout=15) as resp:
-            data: dict = json.loads(resp.read().decode("utf-8"))
+        try:
+            with _req.urlopen(req, timeout=15) as resp:
+                data: dict = json.loads(resp.read().decode("utf-8"))
+        except _uerr.HTTPError as http_exc:
+            # Server trả 4xx/5xx kèm JSON {"ok":false,"message":...} — đọc message thật
+            try:
+                data = json.loads(http_exc.read().decode("utf-8"))
+            except Exception:
+                result["message"] = f"Lỗi server: HTTP {http_exc.code}"
+                return result
     except Exception as exc:
         result["message"] = f"Lỗi kết nối server: {exc}"
         return result
 
-    if not data.get("success"):
+    if not data.get("ok"):
         result["message"] = str(data.get("message") or "Server từ chối license")
         return result
 
@@ -221,13 +230,20 @@ def verify_license_server(key_text: str, hwid: str | None = None, action: str = 
     if session_token:
         _SESSION_TOKEN_RAM = session_token
 
-    expiry_timestamp = data.get("expires")
-    exp_text = ""
-    if expiry_timestamp:
+    record = data.get("record") or {}
+    expiry_raw = data.get("expires") or record.get("expires") or ""
+    expiry_timestamp = None
+    exp_text = "Vĩnh viễn"
+    if expiry_raw:
         try:
-            exp_text = datetime.fromtimestamp(int(expiry_timestamp)).strftime("%d/%m/%Y %H:%M:%S")
+            if str(expiry_raw).isdigit():
+                dt = datetime.fromtimestamp(int(expiry_raw))
+            else:
+                dt = datetime.fromisoformat(str(expiry_raw).replace("Z", "+00:00"))
+            expiry_timestamp = int(dt.timestamp())
+            exp_text = dt.strftime("%d/%m/%Y %H:%M:%S")
         except Exception:
-            exp_text = str(expiry_timestamp)
+            exp_text = str(expiry_raw)
 
     result.update({
         "valid": True,
@@ -337,7 +353,7 @@ class LicenseActivationApp:
         ).pack(anchor="w", padx=28, pady=(15, 0))
         tk.Label(
             header,
-            text="Shopee Voucher & SPC_ST Tool • v3.14",
+            text="Shopee Voucher & SPC_ST Tool • v3.20",
             bg=self.colors["panel"],
             fg=self.colors["muted"],
             font=("Segoe UI", 9),
